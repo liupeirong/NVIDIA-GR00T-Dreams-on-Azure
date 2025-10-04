@@ -6,13 +6,28 @@ Azure VM. The process is depicted in [NVIDIA's blueprint](https://developer.nvid
 
 ![NVIDIA GR00T-Dreams blueprint](./media/GR00T-Dreams-blueprint.png)
 
+The following diagram illustrates the same flow with a little more details.
+
+![NVIDIA GR00T-Dreams Concept](./media/GR00T-Dreams.png)
+
 The [GR00T-Dreams repo](https://github.com/NVIDIA/GR00T-Dreams) outlines
 the steps for this flow. This doc provides the adjusted instructions if
-you were to try it on an Azure VM.
+you want to try it on an Azure VM.
+
+**Key Steps**
+
+- [Pre-requisites on Azure](#pre-requisites-on-azure)
+- [Set up the environment for Cosmos-Predict2](#set-up-the-environment-for-cosmos-predict2)
+- [Fine tune Cosmos-Predict2](#fine-tune-cosmos-predict2)
+- [Generate synthetic video data](#generate-synthetic-video-data)
+- [Custom train IDM (Inverse Dynamic Model) for your robot](#custom-train-idm-inverse-dynamic-model-for-your-robot)
+- [Run IDM to get action labels for synthetic video data](#run-idm-to-get-action-labels-for-synthetic-video-data)
+- [Fine tune GR00T N1 robot foundation model](#fine-tune-gr00t-n1-robot-foundation-model)
+- [Run inference on the fine-tuned GR00T N1](#run-inference-on-the-fine-tuned-gr00t-n1)
 
 ## Pre-requisites on Azure
 
-* Provision a Ubuntu 24.04 LTS VM of size `NC40ads_H100_v5` on Azure,
+- Provision a Ubuntu 24.04 LTS VM of size `NC40ads_H100_v5` on Azure,
 Standard boot, not secure boot. This VM has 1 GPU and 94GB GPU memory,
 sufficient to run the GR00T-Dreams workload.
 
@@ -66,6 +81,12 @@ error when generating video.
     uv pip install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git
     ```
 
+## Fine tune Cosmos-Predict2
+
+In this example, we use Gr1 as our robot embodiment as it's
+already supported by the provided IDM and GR00T N1 fine-tuning
+script.
+
 1. Download Cosmos-Predict2 model checkpoints
 
     * Sign up for Huggingface and apply for meta llama 3.1 gated repo access.
@@ -79,7 +100,7 @@ error when generating video.
     # fine-tuning Cosmos-predict2-2B-video2world based on gr00t dataset
     ```
 
-1. Download *training dataset for Gr1*
+1. Download training dataset for Gr1
 
     ```bash
     huggingface-cli download nvidia/GR1-100 --repo-type dataset --local-dir datasets/benchmark_train/hf_gr1/ && \
@@ -102,6 +123,8 @@ error when generating video.
     # output will be saved to checkpoints/posttraining/video2world/2b_groot_gr1_480
     ```
 
+## Generate synthetic video data
+
 1. Run inference of the post-trained model on a prompt with a single image
 
     ```bash
@@ -113,7 +136,7 @@ error when generating video.
       --save_path output/generated_video_from_post-training.mp4
     ```
 
-1. Generate *synthetic video data* by running inference on the post-trained model on a *benchmark dataset*
+1. Generate synthetic video data by running inference on the post-trained model on a benchmark dataset
     This dataset has pairs of prompt and images of many robot tasks.
 
     ```bash
@@ -145,7 +168,36 @@ error when generating video.
       --disable_guardrail
     ```
 
-1. Convert generated synthetic data folder for use with Inverse Dynamics Model (IDM)
+    Inference on the entire batch
+
+    ```bash
+    python -m examples.video2world_gr00t \
+      --model_size 14B \
+      --gr00t_variant gr1 \
+      --batch_input_json dream_gen_benchmark/gr1_object/batch_input.json \
+      --disable_guardrail
+    ```
+
+    See [Inference with Cosmos-Reason1 Rejection Sampling](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world_gr00t.md#5-inference-with-cosmos-reason1-rejection-sampling)
+    for how to filter the generated video.
+
+## Custom train IDM (Inverse Dynamic Model) for your robot
+
+The IDM in the NVIDIA Dreams repo only supports target embodiment of
+Franka, Gr1, Soo100, and Robocasa. If you don't already have one for
+your robot, you need to train an IDM.
+
+  ```bash
+  # supply your own demo_data/robot_sim.PickNPlace/
+  PYTHONPATH=. torchrun scripts/idm_training.py --dataset-path demo_data/robot_sim.PickNPlace/ --embodiment_tag <your_robot>
+  ```
+
+See [Training Custom IDM model](https://github.com/NVIDIA/GR00T-Dreams?tab=readme-ov-file#optional-33-training-custom-idm-model)
+for more details.
+
+## Run IDM to get action labels for synthetic video data
+
+1. Convert generated synthetic data folder for use with IDM
 
     ```bash
     git clone https://github.com/NVIDIA/GR00T-Dreams.git
@@ -167,74 +219,66 @@ error when generating video.
     python IDM_dump/raw_to_lerobot.py --input_dir "IDM_dump/data/gr1_data_split" --output_dir "IDM_dump/data/gr1_unified.data" --cosmos_predict2
     ```
 
-1. Train IDM for your robot and run IDM to add actions to the synthetic data
+1. Run IDM to add actions to the synthetic data
 
     ```bash
     python IDM_dump/dump_idm_actions.py --checkpoint "seonghyeonye/IDM_gr1" --dataset "IDM_dump/data/gr1_unified.data" --output_dir "IDM_dump/data/gr1_unified.data_idm" --num_gpus 1 --video_indices "0 8"
     ```
 
-    We have IDM that supports target embodiment of Franka, Gr1, Soo100, and Robocasa.
-    If you don't already have an IDM for your robot, you need to train an IDM.
+## Fine tune GR00T N1 robot foundation model
 
-    ```bash
-    # supply your own demo_data/robot_sim.PickNPlace/
-    PYTHONPATH=. torchrun scripts/idm_training.py --dataset-path demo_data/robot_sim.PickNPlace/ --embodiment_tag <your_robot>
+The fine-tuning scripts are in `IDM_dump/scripts/*_finetune`. The NVIDIA repo
+currently only supports franka, gr1, so100, and robocasa. You need to create your
+own (not included in this sample) for another embodiment.
 
-    # IDM_dump/scripts/finetune (currently only supports franka, gr1, so100, robocasa)
-    ```
+  ```bash
+  torchrun scripts/gr00t_finetune.py --dataset-path "IDM_dump/data/gr1_unified.data_idm" --data-config gr1_arms_waist --embodiment_tag "gr1"  
 
-1. Use the synthetic data to fine-tune GR00T N1
+  # fine-tuned checkpoint is in /tmp/gr00t
+  cp -r /tmp/gr00t/checkpoint-5000 results/gr00t/
+  ```
 
-    ```bash
-    torchrun scripts/gr00t_finetune.py --dataset-path "IDM_dump/data/gr1_unified.data_idm" --data-config gr1_arms_waist --embodiment_tag "gr1"  
+## Run inference on the fine-tuned GR00T N1
 
-    # fine-tuned checkpoint is in /tmp/gr00t
-    cp -r /tmp/gr00t/checkpoint-5000 results/gr00t/
-    ```
+  ```python
+  # loading dataset
+  import numpy as np
 
-1. Run inference on the fine-tuned GR00T N1
+  modality_config = policy.modality_config
 
-    Create a inference.py as following:
+  print(modality_config.keys())
 
-    ```python
-    # loading dataset
-    import numpy as np
+  for key, value in modality_config.items():
+      if isinstance(value, np.ndarray):
+          print(key, value.shape)
+      else:
+          print(key, value)
 
-    modality_config = policy.modality_config
+  # Create the dataset
+  dataset = LeRobotSingleDataset(
+      dataset_path=DATASET_PATH,
+      modality_configs=modality_config,
+      video_backend="decord",
+      video_backend_kwargs=None,
+      transforms=None,  # We'll handle transforms separately through the policy
+      embodiment_tag=EMBODIMENT_TAG,
+  )
 
-    print(modality_config.keys())
+  # print out a single data point
+  step_data = dataset[0]
 
-    for key, value in modality_config.items():
-        if isinstance(value, np.ndarray):
-            print(key, value.shape)
-        else:
-            print(key, value)
+  print(step_data)
 
-    # Create the dataset
-    dataset = LeRobotSingleDataset(
-        dataset_path=DATASET_PATH,
-        modality_configs=modality_config,
-        video_backend="decord",
-        video_backend_kwargs=None,
-        transforms=None,  # We'll handle transforms separately through the policy
-        embodiment_tag=EMBODIMENT_TAG,
-    )
+  print("\n\n ====================================")
+  for key, value in step_data.items():
+      if isinstance(value, np.ndarray):
+          print(key, value.shape)
+      else:
+          print(key, value)
 
-    # print out a single data point
-    step_data = dataset[0]
+  print("\n\n ========Prediction==================")
+  predicted_action = policy.get_action(step_data)
+  for key, value in predicted_action.items():
+      print(key, value.shape)
 
-    print(step_data)
-
-    print("\n\n ====================================")
-    for key, value in step_data.items():
-        if isinstance(value, np.ndarray):
-            print(key, value.shape)
-        else:
-            print(key, value)
-
-    print("\n\n ========Prediction==================")
-    predicted_action = policy.get_action(step_data)
-    for key, value in predicted_action.items():
-        print(key, value.shape)
-
-    ```
+  ```
