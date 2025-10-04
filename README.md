@@ -228,8 +228,9 @@ for more details.
 ## Fine tune GR00T N1 robot foundation model
 
 The fine-tuning scripts are in `IDM_dump/scripts/*_finetune`. The NVIDIA repo
-currently only supports franka, gr1, so100, and robocasa. You need to create your
-own (not included in this sample) for another embodiment.
+currently only supports franka, gr1, so100, and robocasa out-of-the-box. You
+need to create your own for another embodiment, see
+[2_new_embodiment_finetuning](https://github.com/NVIDIA/GR00T-Dreams/blob/main/getting_started/3_new_embodiment_finetuning.ipynb).
 
   ```bash
   torchrun scripts/gr00t_finetune.py --dataset-path "IDM_dump/data/gr1_unified.data_idm" --data-config gr1_arms_waist --embodiment_tag "gr1"  
@@ -239,6 +240,9 @@ own (not included in this sample) for another embodiment.
   ```
 
 ## Run inference on the fine-tuned GR00T N1
+
+  See [1_gr00t_inference.ipynb](https://github.com/NVIDIA/GR00T-Dreams/blob/main/getting_started/1_gr00t_inference.ipynb)
+  for the complete code.
 
   ```python
   # loading dataset
