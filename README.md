@@ -193,7 +193,17 @@ your robot, you need to train an IDM.
   ```
 
 See [Training Custom IDM model](https://github.com/NVIDIA/GR00T-Dreams?tab=readme-ov-file#optional-33-training-custom-idm-model)
-for more details.
+for more details. The doc mentions that for a new embodiment, you need to provide `modality` and `stats`.
+`modality` is telling the training code which columns in the state and action vectors are, for example, left arm.
+`stats` is the statistical distribution of the columns in the state and action vectors.
+
+Conceptually, IDM training is about taking the states (ex. join positions) and/or observations (ex. video frames)
+at time _t_ and _t+1_, combined with a prompt, to predict the action that needs to be taken from the state at _t_
+to state at _t+1_. So, `(s_t, s_t+1, o_t, o_t+1) -> a_t`
+
+At inference time, we only have a video and prompt, no existing state, so how does it work?
+The states, observations, prompt, and actions are encoded into the same latent space.
+So at inference time, state is inferred from observations. `(o_t, o_t+1) -> a_t`
 
 ## Run IDM to get action labels for synthetic video data
 
@@ -286,3 +296,29 @@ need to create your own for another embodiment, see
       print(key, value.shape)
 
   ```
+
+**Additional Concepts**
+
+## How does multi-view dataset work?
+
+- All camera views are used to train a single model.
+- At inference time, provide a single image with a grid of views from multiple cameras,
+ and the prompt that explains each camera view. Run through the single post-trained model
+ to get output videos for all cameras. See the [DROID example](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world_gr00t.md#3-inference-for-gr00t-dreams-checkpoints).
+- How's the multi-view model trained? I can't find an training example for DROID in
+ [Cosmos-Predict](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_video2world_gr00t.md#video2world-post-training-for-dreamgen-bench), however, it does have an example to 
+ [post-train a multi-view Cosmos-Predict model for waymo](https://github.com/nvidia-cosmos/cosmos-predict2/blob/main/documentations/post-training_multiview_waymo.md) which seems to work similarly to DROID.
+ Note that in the training data, each camera video file and their respective prompt are provided
+ separately, different from the input for inference.
+
+## How does the Cosmos Reason model work in DreamGen?
+
+The Cosmos-Reason model can do, for example,
+
+- generate captions for a video
+- find all the events in a video and generate the caption for each event
+- find anomaly in a video
+- answer questions such as "what are the potential safety hazard?"
+- generate multiple output videos, or "rollouts", from the same input, critique and
+score each rollout to find the best-of-n. This is what can be used in Cosmos-Predict
+to improve the quality of the generated video.
